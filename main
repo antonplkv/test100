@@ -1,7 +1,7 @@
-import config
+
 from TelegramBot import KovalskaBot
 dasdas
-
+dasdas
 
 from utils import *
 from queries import *
