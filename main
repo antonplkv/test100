@@ -1,8 +1,11 @@
 import config
 from TelegramBot import KovalskaBot
+dasdas
+
 
 from utils import *
 from queries import *
+
 from queries import set_user_db
 from telebot import types
 from checks import *
