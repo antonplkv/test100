@@ -1,0 +1,454 @@
+import config
+from TelegramBot import KovalskaBot
+
+from utils import *
+from queries import *
+from queries import set_user_db
+from telebot import types
+from checks import *
+from GA import report,pageview
+import uuid
+import json, requests, time
+from istat import Istat
+tBot = KovalskaBot(config.token)
+from flask import Flask, request
+import flask
+import telebot
+import cherrypy
+import config
+import time
+from itertools import zip_longest 
+
+def get_ngrok_address():
+    url = requests.get("http://localhost:4040/api/tunnels")
+    https_url = json.loads(url.text)
+    return https_url['tunnels'][0]['public_url']
+
+bot = telebot.TeleBot(config.token)
+from flask import Flask, request
+import telebot
+
+def grouper(n, iterable, fillvalue=None):
+    args = [iter(iterable)] * n
+    return zip_longest(fillvalue=fillvalue, *args)
+
+
+import telebot
+import cherrypy
+import config
+
+WEBHOOK_HOST = '127.0.0.1'
+WEBHOOK_PORT = 8443  # 443, 80, 88 или 8443 (порт должен быть открыт!)
+WEBHOOK_LISTEN = '127.0.0.1'  # На некоторых серверах придется указывать такой же IP, что и выше
+
+
+
+
+
+
+# Наш вебхук-сервер
+class WebhookServer(object):
+    @cherrypy.expose
+    def index(self):
+        if 'content-length' in cherrypy.request.headers and \
+                        'content-type' in cherrypy.request.headers and \
+                        cherrypy.request.headers['content-type'] == 'application/json':
+            length = int(cherrypy.request.headers['content-length'])
+            json_string = cherrypy.request.body.read(length).decode("utf-8")
+            update = telebot.types.Update.de_json(json_string)
+            # Эта функция обеспечивает проверку входящего сообщения
+            tBot.bot.process_new_updates([update])
+            return ''
+        else:
+            raise cherrypy.HTTPError(403)
+
+
+
+bot.remove_webhook()
+
+ # Ставим заново вебхук
+bot.set_webhook("https://clarus.serveo.net/")
+
+
+
+
+#Функция начала работы с ботом
+@tBot.bot.message_handler(commands=['start'])
+def menu(message):
+    
+    set_user(message.chat.id)
+    set_user_db(message)
+
+    #Собираем пользователские параметры
+    user_info = get_full_user(message, tBot.bot)
+    ga = "122212123"
+    #Стартуем таймер с пользовательскими параметрами
+    Istat.start_timer(ga,user_info[0],user_info[1],message.chat.id)
+    #Запускаем проверку данного пользователя на блокировку
+    Istat.check_for_block(message.chat.id,ga,user_info[0],user_info[1], tBot)
+    set_timer(message.chat.id, "True")
+    set_state(message.chat.id, "Started")
+    greetings_str = "Доброго дня"
+    name_str = message.from_user.first_name+"."
+    if name_str:
+        greetings_str += ", " + name_str
+    greetings_str += " Вас вітає компанія Ковальська Нерухомість! Будь ласка, оберіть житловий комплекс"
+    
+    complex_list = getComplexes()#Получаем список существуюших в БД ЖК
+    #Выводим на экран инлайн клавиатуру с ними
+    #Удаляем клавиатуру
+    message_keyboard = types.ReplyKeyboardRemove()
+    tBot.sendMessage(message.chat.id, greetings_str, message_keyboard)
+    time.sleep(5)
+    tBot.getComplexMenu(complex_list, message.chat.id)
+    
+    
+    
+
+    # #GA
+    # client_id = uuid.uuid4()  # Ставим уникальный ГА ИД
+    # set_ga_id(message.chat.id, client_id)  # Сохраняем его
+    # set_user_came_from(message.chat.id, message.text)  # Храним откуда пришёл юзер
+    # data = pageview(path=config.messenger,  referrer=get_user_came_from(message.chat.id))
+
+    # report(config.ga_tracking_id, client_id, data)
+
+
+
+#Нажатие на начало
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Begin"])
+def begin(message):
+
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_list = getComplexes()#Получаем список существуюших в БД ЖК
+    #Выводим на экран инлайн клавиатуру с ними
+    tBot.getComplexMenu(complex_list, message.chat.id)
+    set_state(message.chat.id, "Begin")
+    
+
+"""СВЯЗЬ С ОПЕРАТОРОМ"""
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["OperatorCall"])
+def OperatorCall(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    tBot.sendOperatorKeyboard(message.chat.id,"Найближчим часом з вами звяжеться оператор")
+    set_state(message.chat.id,"name_input_call")#Устанавливаем состояние ввода имени для связи с оператором
+    first_name = message.from_user.first_name
+    last_name = message.from_user.last_name
+    try:
+        user_photo = get_user_photo_url(message.chat.id, tBot.bot)
+    except:
+        user_photo = '-'
+    
+       
+
+    
+    if not first_name:
+        first_name = '-'
+    if not last_name:
+        last_name = '-'
+    if user_photo == None:
+        user_photo = '-'
+    #Заявка на связь с оператором
+    data = {"user_id": message.chat.id, "first_name": first_name, "last_name": last_name, "img_url" : user_photo, "messenger":"Telegram"}
+    json_data = json.dumps(data, separators=(',', ': '))
+
+
+    r = requests.post('http://104.248.29.78:8000/bots_import/', data=json_data)
+    set_state(message.chat.id, "OperatorCommunication")
+
+
+@tBot.bot.message_handler(func = lambda message: get_state(message.chat.id) == "OperatorCommunication")
+def operator_communication(message):
+    data = {"user_id":message.chat.id, "message":message.text}
+    json_data = json.dumps(data, separators=(',', ': '))
+    r = requests.get('http://104.248.29.78:8000/bots_import/recievingMessages', data = json_data)
+
+
+
+#Вывод ЖК на экран
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Begin"])
+def complex_show(message):
+    complex_list = getComplexes()#Получаем список существуюших в БД ЖК
+    #Выводим на экран инлайн клавиатуру с ними
+    tBot.getComplexMenu(complex_list, message.chat.id)
+
+#Обработка нажатий на ЖК
+@tBot.bot.callback_query_handler(func=checkComplex)
+def complex_chosen(call):
+    Istat.restart_timer("as",{'as':call.message.chat.id},{'as':'as'},call.message.chat.id)
+    user_id = call.message.chat.id
+    Istat.restart_timer("as", {'as':user_id},{'as':'as'}, user_id)
+    set_complex(user_id, call.data.split("_")[1])#Устанавливаем комплекс
+    complex_name = get_complex(user_id)
+    tBot.sendMessage(call.message.chat.id, complex_name)
+    tBot.sendChosenComplexInfo(complex_name, user_id)
+    tBot.sendInfoAboutComplex(user_id)
+
+#Возврат на главную этого ЖК
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["MenuOfThisComplex"])
+def complex_chosen(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_name = get_complex(message.chat.id)
+    tBot.sendMessage(message.chat.id, complex_name)
+    tBot.sendChosenComplexInfo(complex_name, message.chat.id)
+    tBot.sendInfoAboutComplex(message.chat.id)
+
+
+
+"""СЛОВАРЬ RESULT ХРАНИТ ЗНАЧЕНИЯ ПОЛУЧЕННЫЕ С БД. result['img'] картинка соответствующая 
+определённому пункту меню, result['descr'] описание к этой картинке. Например, ФОТО ДОКУМЕНТА 
++ описание. иногда в result есть нестандартные ключи, например для локации result['location']"""
+
+#Вывод локации ЖК
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Location"])
+def complex_show(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    result = get_location(complex_id)
+    tBot.sendMessage(message.chat.id, result['location'], keyboard = tBot.sendBegin())
+    tBot.bot.send_location(message.chat.id, result['lat'], result['lon'])
+
+
+
+#Вывод документации
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Documentation"])
+def complex_show(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    result = get_documentation(complex_id)
+    try:
+        tBot.sendPhoto(message.chat.id, config.url_base+result['img'])
+
+        for file in result["file"]:
+            tBot.bot.send_document(message.chat.id, config.url_base+file)
+    except FileNotFoundError:
+        print("File doesnt exist")
+    
+
+    tBot.sendMessage(message.chat.id, result['descr'], keyboard = tBot.sendBegin())
+    
+
+#Условия приобретения
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["BuyConditions"])
+def complex_show(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    result = get_buy_conditions(complex_id)
+    try:
+        tBot.sendPhoto(message.chat.id, config.url_base+result['img'])
+    except FileNotFoundError:
+        print("File doesnt exist")
+
+    tBot.sendMessage(message.chat.id, result["descr"], keyboard = tBot.sendBegin())
+    
+
+#Галерея
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Gallery"])
+def complex_show(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    gallery = get_gallery(complex_id)
+    images = []
+    for image in gallery:
+        images.append(types.InputMediaPhoto(media=config.url_base+image[0], caption=image[1]))
+
+    album = grouper(10, images)
+
+    for a in album:
+        tBot.bot.send_media_group(message.chat.id, a)
+    
+    tBot.sendMessage(message.chat.id, "Оберіть зображення", tBot.sendBegin())
+
+#Контакты
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Contacts"])
+def complex_show(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    result = get_contacts(complex_id)
+
+    tBot.sendMessage(message.chat.id, "Подзвоніть нам", keyboard = tBot.sendBegin())
+    tBot.bot.send_contact(message.chat.id, result["contact"], "Manager")
+    
+    
+
+#Ход строительства
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["BuildingProcess"])
+def complex_show(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    gallery = get_building_process(complex_id)
+    images = []
+
+    for image in gallery:
+        images.append(types.InputMediaPhoto(media=config.url_base+image[0], caption=image[1]))
+
+
+    album = grouper(10, images)
+
+    for a in album:
+        tBot.bot.send_media_group(message.chat.id, a)
+
+    tBot.sendMessage(message.chat.id, "Оберіть зображення", tBot.sendBegin())
+    
+
+
+
+#Нажатие на кнопку квартиры
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["Apartment"])
+def build_num(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    available_rooms = get_all_types_of_rooms(complex_id)
+    in_buttons = []
+    tBot.sendMessage(message.chat.id, "Оберіть кількість кімнат",keyboard = tBot.sendBegin())
+    for i in available_rooms:
+        inline_keyboard = types.InlineKeyboardMarkup()
+        inline_keyboard.add(
+            types.InlineKeyboardButton(text="Обрати", callback_data = "room_"+str(i[2])))
+        tBot.sendPhoto(message.chat.id, config.url_base+i[1], keyboard=inline_keyboard, descr=str(i[0])+"-к")
+
+    #     in_buttons.append(
+    #         types.InlineKeyboardButton(text=str(i[0])+"-к" , callback_data='room_'+ str(i[0])))
+
+    #     inline_keyboard = tBot.get_inline_keyboard(tBot.keyboard_tuple(in_buttons, 2))
+    # try:
+    #     tBot.sendMessage(message.chat.id, "Оберіть кількість кімнат", inline_keyboard)
+    # except:
+    #     tBot.sendMessage(message.chat.id, "Ніяких даних не існує")
+
+
+@tBot.bot.callback_query_handler(func = checkRoomsNumber)
+def room_chosen(call):
+    tBot.bot.send_message(call.message.chat.id, "Оберіть квартиру")
+    Istat.restart_timer("as",{'as':call.message.chat.id},{'as':'as'},call.message.chat.id)
+    rooms_number = call.data.split("_")
+    set_rooms_number(call.message.chat.id,rooms_number[1])
+    rooms = get_rooms_number(call.message.chat.id)
+    complex_id = get_complex_id(get_complex(call.message.chat.id))
+    room_info = get_available_apartments(complex_id, rooms)
+    for rooms in room_info:#Выводим все существующие квартиры
+        inline_keyboard = types.InlineKeyboardMarkup()
+        #Коллбек под планировкой имеет id квартиры, который в БД
+        inline_keyboard.add(types.InlineKeyboardButton(text=str("Обрати Квартиру"), callback_data='apartmentid_' + str(rooms[5])))
+        floor = rooms[0]
+        square = rooms[1]
+        description = rooms[2]
+        image_url = rooms[3]
+        number_of_rooms = rooms[4]
+        info_message = "Площа <b>{}</b>\nКількість кімнат <b>{}</b>".format(square,number_of_rooms)
+        print(config.url_base+image_url)
+        tBot.sendPhoto(call.message.chat.id, config.url_base+image_url, keyboard=inline_keyboard, descr=info_message)
+        
+
+
+
+#Кнопка позвонити
+@tBot.bot.message_handler(func = lambda message: message.text == config.buttons["Call"])
+def call(message):
+    complex_id = get_complex_id(get_complex(message.chat.id))#Получаем айди комплекса
+    result = get_contacts(complex_id)
+    tBot.sendMessage(message.chat.id, "Подзвоніть нам", keyboard = tBot.sendBegin())
+    tBot.bot.send_contact(message.chat.id, result["contact"], "Manager")
+
+
+@tBot.bot.callback_query_handler(func = apartmentCheck)
+def apartment_chosen(call):
+    Istat.restart_timer("as",{'as':call.message.chat.id},{'as':'as'},call.message.chat.id)
+    #Получаем квартиру в зависимости от кликнутой
+    result = get_apartment(call.data.split('_')[1])
+    try:
+        tBot.sendPhoto(call.message.chat.id, config.url_base+result['img'])
+    except FileNotFoundError:
+        print("File doesnt exist")
+
+    tBot.sendMessage(call.message.chat.id, result['descr'], keyboard = tBot.generateCallbackKeyboard())
+
+@tBot.bot.message_handler(func = lambda message: message.text == config.buttons["GoBack"])
+def goBack(message):
+    tBot.sendMessage(message.chat.id, "Оберіть пункт меню", keyboard = tBot.generateCallbackKeyboard())
+
+"""Форма обратной связи"""
+@tBot.bot.message_handler(func=lambda message: message.text == config.buttons["CallForConsultation"] )
+def OperatorCall(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    tBot.sendOperatorKeyboard(message.chat.id,"Введіть будь-ласка ваше ім'я")
+    set_state(message.chat.id,"name_input_call")#Устанавливаем состояние ввода имени для связи с оператором
+
+#Ввели имя
+@tBot.bot.message_handler(func=lambda message: get_state(message.chat.id) == "name_input_call")
+def OperatorCallName(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    #Проверка на нажатие кнопки ПРОПУСТИТИ
+    if message.text == config.buttons["Pass"]:
+        set_state(message.chat.id, "mail_input_call")
+        tBot.sendOperatorKeyboard(message.chat.id,"Введіть будь-ласка вашу пошту")
+        return None
+
+    tBot.sendOperatorKeyboard(message.chat.id,"Введіть будь-ласка вашу пошту")
+    set_state(message.chat.id,"mail_input_call")#Устанавливаем состояние ввода имени для связи с оператором
+    set_name(message.chat.id,message.text)
+
+#Ввели почту
+@tBot.bot.message_handler(func=lambda message: get_state(message.chat.id) == "mail_input_call")
+def OperatorCallMail(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    #Проверка на нажатие кнопки ПРОПУСТИТИ
+    if message.text == config.buttons["Pass"]:
+        set_state(message.chat.id,"number_input_call")
+        tBot.sendOperatorKeyboard(message.chat.id,"Введіть будь-ласка ваш номер телефону")
+        return None
+
+    if validate_mail(message.text):
+        set_mail(message.chat.id,message.text)
+        tBot.sendOperatorKeyboard(message.chat.id,"Введіть будь-ласка ваш номер телефону")
+        set_state(message.chat.id,"number_input_call")#Устанавливаем состояние ввода номера для связи с оператором
+    else:
+        tBot.sendMessage(message.chat.id, "Невірний формат пошти")
+        set_state(message.chat.id,"mail_input_call")
+
+
+#Ввели номер
+@tBot.bot.message_handler(func=lambda message: get_state(message.chat.id) == "number_input_call")
+def OperatorCallPhone(message):
+    Istat.restart_timer("as",{'as':message.chat.id},{'as':'as'},message.chat.id)
+    #Проверка на нажатие кнопки ПРОПУСТИТИ
+    if message.text == config.buttons["Pass"]:
+        tBot.sendMessage(message.chat.id, "Обов'язково введіть номер телефону")
+        set_state(message.chat.id,"number_input_call")
+        return None
+    
+    if validate_phone(message.text):
+        set_phone(message.chat.id,message.text)
+        tBot.sendOperatorKeyboard(message.chat.id,"Дякуємо за заявку. Оператор з Вами зв'яжеться.")
+        tBot.sendBegin(message.chat.id,"Меню")
+        set_state(message.chat.id,"InfoEntered")#Устанавливаем состояние окончания ввода
+    else:
+        tBot.sendMessage(message.chat.id, "Невірно введений номер")
+        set_state(message.chat.id,"number_input_call")
+
+
+
+# Указываем настройки сервера CherryPy
+cherrypy.config.update({
+    'server.socket_host': WEBHOOK_LISTEN,
+    'server.socket_port': WEBHOOK_PORT,
+
+
+})
+WEBHOOK_URL_PATH=""
+ # Собственно, запуск!
+cherrypy.quickstart(WebhookServer(), WEBHOOK_URL_PATH, {'/': {}})
+
+
+
+# if __name__ == "__main__":
+#     tBot.bot.remove_webhook()
+#     tBot.poll()
+#     # app.run(host='127.0.0.1', port=8443, debug=True)
+#     # print("hello")  
+
+if __name__ == "__main__":
+    print("started")
+
+     
+
